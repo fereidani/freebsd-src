@@ -240,7 +240,8 @@ convert_label(const uint16_t *ucs2label /* LE */, unsigned ucs2len, char
 }
 
 /*
- * Using the FAT table, look up the next cluster in this chain.
+ * Using the FAT table, look up the next cluster in this chain.  If the FAT
+ * cannot be read, end the chain.
  */
 static uint32_t
 exfat_fat_next(FILE *fp, const struct exfat_vbr *ev, unsigned BPS,
@@ -255,6 +256,8 @@ exfat_fat_next(FILE *fp, const struct exfat_vbr *ev, unsigned BPS,
 
 	/* XXX This is pretty wasteful without a block cache for the FAT. */
 	fatsect = read_sect(fp, clsect, BPS);
+	if (fatsect == NULL)
+		return (END_CLUSTER_SENTINEL);
 	nextclust = le32toh(fatsect[clsectoff]);
 	free(fatsect);
 
@@ -291,6 +294,8 @@ exfat_find_label(FILE *fp, const struct exfat_vbr *ev, unsigned BPS,
 		rootdir_sect = (rootdir_cluster - FIRST_CLUSTER) *
 		    sects_per_clust + cluster_offset_sect;
 		declust = read_sectn(fp, rootdir_sect, sects_per_clust, BPS);
+		if (declust == NULL)
+			return;
 		for (it = declust;
 		    it < declust + (sects_per_clust * BPS / sizeof(*it)); it++) {
 			bool eod = false;
@@ -349,6 +354,10 @@ fstyp_exfat(FILE *fp, char *label, size_t size)
 
 	cksect = read_sect(fp, MAIN_BOOT_REGION_SECT + SUBREGION_CHKSUM_SECT,
 	    bytespersec);
+	if (cksect == NULL) {
+		error = 1;
+		goto out;
+	}
 
 	/*
 	 * Technically the entire sector should be full of repeating 4-byte
