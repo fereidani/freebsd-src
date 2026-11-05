@@ -135,6 +135,9 @@ _Static_assert(sizeof(struct exfat_de_label) == 32, "spec");
 #define	BAD_BLOCK_SENTINEL	0xfffffff7u
 #define	END_CLUSTER_SENTINEL	0xffffffffu
 
+/* The spec limits a directory to 256 MiB. */
+#define	MAX_DIRECTORY_SIZE	(256u * 1024 * 1024)
+
 static inline void *
 read_sectn(FILE *fp, off_t sect, unsigned count, unsigned bytespersec)
 {
@@ -270,6 +273,7 @@ exfat_find_label(FILE *fp, const struct exfat_vbr *ev, unsigned BPS,
 {
 	uint32_t rootdir_cluster, sects_per_clust, cluster_offset_sect;
 	off_t rootdir_sect;
+	uint64_t rootdir_size;
 	struct exfat_dirent *declust, *it;
 
 	cluster_offset_sect = le32toh(ev->ev_cluster_offset);
@@ -282,12 +286,19 @@ exfat_find_label(FILE *fp, const struct exfat_vbr *ev, unsigned BPS,
 		return;
 	}
 
-
+	rootdir_size = 0;
 	for (; rootdir_cluster != END_CLUSTER_SENTINEL;
 	    rootdir_cluster = exfat_fat_next(fp, ev, BPS, rootdir_cluster)) {
 		if (rootdir_cluster == BAD_BLOCK_SENTINEL) {
 			warnx("%s: Bogus bad block in root directory chain",
 			    __func__);
+			return;
+		}
+
+		/* A corrupt FAT can contain a cycle. */
+		rootdir_size += (uint64_t)sects_per_clust * BPS;
+		if (rootdir_size > MAX_DIRECTORY_SIZE) {
+			warnx("%s: Root directory chain too long", __func__);
 			return;
 		}
 
